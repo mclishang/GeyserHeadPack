@@ -1,0 +1,37 @@
+# GeyserHeadPack 配置文件
+
+# 代理设置
+proxy:
+  # 是否启用代理
+  enabled: false
+  # 代理类型: HTTP, SOCKS
+  type: HTTP
+  # 代理地址
+  host: 127.0.0.1
+  # 代理端口
+  port: 7897
+  # 代理用户名（如果需要认证）
+  username: ""
+  # 代理密码（如果需要认证）
+  password: ""
+
+# 下载设置
+download:
+  # 线程数
+  threads: 8
+  # 连接超时（毫秒）
+  connect-timeout: 5000
+  # 读取超时（毫秒）
+  read-timeout: 10000
+  # 重试次数
+  retry-count: 3
+  # 重试间隔（毫秒）
+  retry-delay: 1000
+
+# 缓存设置
+cache:
+  # 是否清理未使用的缓存
+  clean-unused: true
+
+# 调试模式
+debug: false 
