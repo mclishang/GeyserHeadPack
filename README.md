@@ -1,4 +1,4 @@
-# GeyserHeadPack
+# GeyserHeadPack（Chinese）
 
 GeyserHeadPack是一个Geyser扩展插件，用于加载和注册自定义头颅。
 
