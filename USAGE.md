@@ -1,4 +1,4 @@
-# 使用GeyserHeadPack
+# 使用GeyserHeadPack（Chinese）
 
 ## 安装
 
