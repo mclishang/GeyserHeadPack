@@ -6,215 +6,237 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 插件配置类
+ * GeyserHeadPack 配置类
  */
 public class GeyserHeadPackConfig {
-    // 代理设置
-    private boolean proxyEnabled = false;
-    private String proxyType = "HTTP";
-    private String proxyHost = "127.0.0.1";
-    private int proxyPort = 7890;
-    private String proxyUsername = "";
-    private String proxyPassword = "";
+    private final int downloadThreads;
+    private final int connectTimeout;
+    private final int readTimeout;
+    private final boolean forceDownload;
+    private final boolean cleanUnused;
+    private final boolean proxyEnabled;
+    private final String proxyType;
+    private final String proxyHost;
+    private final int proxyPort;
+    private final boolean debug;
+    private final String language;
 
-    // 下载设置
-    private int downloadThreads = 5;
-    private int connectTimeout = 5000;
-    private int readTimeout = 10000;
-    private int retryCount = 3;
-    private int retryDelay = 1000;
 
-    // 缓存设置
-    private boolean cleanUnused = true;
+    public GeyserHeadPackConfig(int downloadThreads, int connectTimeout, int readTimeout, 
+                               boolean forceDownload, boolean cleanUnused, 
+                               boolean proxyEnabled, String proxyType, String proxyHost, int proxyPort, 
+                               boolean debug, String language) {
+        this.downloadThreads = downloadThreads;
+        this.connectTimeout = connectTimeout;
+        this.readTimeout = readTimeout;
+        this.forceDownload = forceDownload;
+        this.cleanUnused = cleanUnused;
+        this.proxyEnabled = proxyEnabled;
+        this.proxyType = proxyType;
+        this.proxyHost = proxyHost;
+        this.proxyPort = proxyPort;
+        this.debug = debug;
+        this.language = language;
+    }
+    
 
-    // 调试模式
-    private boolean debug = false;
-
-    /**
-     * 从文件加载配置
-     * @param configFile 配置文件
-     * @return 配置对象
-     */
-    public static GeyserHeadPackConfig load(File configFile) {
-        GeyserHeadPackConfig config = new GeyserHeadPackConfig();
-        
-        if (configFile == null || !configFile.exists()) {
-            return config; // 使用默认配置
-        }
-        
-        try (FileInputStream fis = new FileInputStream(configFile);
-             InputStreamReader isr = new InputStreamReader(fis, StandardCharsets.UTF_8)) {
-            
-            Yaml yaml = new Yaml();
-            Map<String, Object> yamlData = yaml.load(isr);
-            
-            if (yamlData != null) {
-                config.loadFromMap(yamlData);
-            }
-            
+    public static GeyserHeadPackConfig load(File file) {
+        try (FileInputStream inputStream = new FileInputStream(file)) {
+            return loadFromInputStream(inputStream);
         } catch (IOException e) {
             e.printStackTrace();
+            return null;
+        }
+    }
+    
+
+    public static GeyserHeadPackConfig load(InputStream inputStream) {
+        if (inputStream == null) {
+            return null;
         }
         
-        return config;
+        return loadFromInputStream(inputStream);
     }
+    
 
-    /**
-     * 从classpath资源加载配置
-     * @param resourcePath 资源路径
-     * @return 配置对象
-     */
-    public static GeyserHeadPackConfig loadFromResource(String resourcePath) {
-        GeyserHeadPackConfig config = new GeyserHeadPackConfig();
-        
-        try (InputStream is = GeyserHeadPackConfig.class.getClassLoader().getResourceAsStream(resourcePath);
-             InputStreamReader isr = new InputStreamReader(is, StandardCharsets.UTF_8)) {
-            
+    @SuppressWarnings("unchecked")
+    private static GeyserHeadPackConfig loadFromInputStream(InputStream inputStream) {
+        try {
             Yaml yaml = new Yaml();
-            Map<String, Object> yamlData = yaml.load(isr);
+            Map<String, Object> config = yaml.load(inputStream);
             
-            if (yamlData != null) {
-                config.loadFromMap(yamlData);
-            }
+            boolean debug = getBooleanValue(config, "debug", false);
             
+            String language = getStringValue(config, "language", "zh_CN");
+            
+            Map<String, Object> downloadConfig = getMapValue(config, "download");
+            int downloadThreads = getIntValue(downloadConfig, "threads", 16);
+            int connectTimeout = getIntValue(downloadConfig, "connect-timeout", 5000);
+            int readTimeout = getIntValue(downloadConfig, "read-timeout", 5000);
+            boolean forceDownload = getBooleanValue(downloadConfig, "force-download", false);
+            boolean cleanUnused = getBooleanValue(downloadConfig, "clean-unused", true);
+            
+            Map<String, Object> proxyConfig = getMapValue(config, "proxy");
+            boolean proxyEnabled = getBooleanValue(proxyConfig, "enabled", false);
+            String proxyType = getStringValue(proxyConfig, "type", "HTTP");
+            String proxyHost = getStringValue(proxyConfig, "host", "127.0.0.1");
+            int proxyPort = getIntValue(proxyConfig, "port", 7897);
+            
+            return new GeyserHeadPackConfig(
+                downloadThreads, connectTimeout, readTimeout, 
+                forceDownload, cleanUnused, 
+                proxyEnabled, proxyType, proxyHost, proxyPort, 
+                debug, language
+            );
         } catch (Exception e) {
             e.printStackTrace();
+            return null;
+        }
+    }
+    
+
+    private static boolean getBooleanValue(Map<String, Object> map, String key, boolean defaultValue) {
+        if (map == null) {
+            return defaultValue;
         }
         
-        return config;
+        Object value = map.get(key);
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        } else if (value instanceof String) {
+            return Boolean.parseBoolean((String) value);
+        }
+        
+        return defaultValue;
     }
+    
 
-    /**
-     * 从Map加载配置
-     * @param map YAML配置Map
-     */
+    private static int getIntValue(Map<String, Object> map, String key, int defaultValue) {
+        if (map == null) {
+            return defaultValue;
+        }
+        
+        Object value = map.get(key);
+        if (value instanceof Integer) {
+            return (Integer) value;
+        } else if (value instanceof Number) {
+            return ((Number) value).intValue();
+        } else if (value instanceof String) {
+            try {
+                return Integer.parseInt((String) value);
+            } catch (NumberFormatException e) {
+                return defaultValue;
+            }
+        }
+        
+        return defaultValue;
+    }
+    
+
+    private static String getStringValue(Map<String, Object> map, String key, String defaultValue) {
+        if (map == null) {
+            return defaultValue;
+        }
+        
+        Object value = map.get(key);
+        if (value instanceof String) {
+            return (String) value;
+        }
+        
+        return value != null ? value.toString() : defaultValue;
+    }
+    
+
     @SuppressWarnings("unchecked")
-    private void loadFromMap(Map<String, Object> map) {
-        // 加载代理设置
-        if (map.containsKey("proxy")) {
-            Map<String, Object> proxy = (Map<String, Object>) map.get("proxy");
-            
-            if (proxy.containsKey("enabled")) {
-                this.proxyEnabled = Boolean.parseBoolean(proxy.get("enabled").toString());
-            }
-            
-            if (proxy.containsKey("type")) {
-                this.proxyType = proxy.get("type").toString();
-            }
-            
-            if (proxy.containsKey("host")) {
-                this.proxyHost = proxy.get("host").toString();
-            }
-            
-            if (proxy.containsKey("port")) {
-                this.proxyPort = Integer.parseInt(proxy.get("port").toString());
-            }
-            
-            if (proxy.containsKey("username")) {
-                this.proxyUsername = proxy.get("username").toString();
-            }
-            
-            if (proxy.containsKey("password")) {
-                this.proxyPassword = proxy.get("password").toString();
-            }
+    private static Map<String, Object> getMapValue(Map<String, Object> map, String key) {
+        if (map == null) {
+            return null;
         }
         
-        // 加载下载设置
-        if (map.containsKey("download")) {
-            Map<String, Object> download = (Map<String, Object>) map.get("download");
-            
-            if (download.containsKey("threads")) {
-                this.downloadThreads = Integer.parseInt(download.get("threads").toString());
-            }
-            
-            if (download.containsKey("connect-timeout")) {
-                this.connectTimeout = Integer.parseInt(download.get("connect-timeout").toString());
-            }
-            
-            if (download.containsKey("read-timeout")) {
-                this.readTimeout = Integer.parseInt(download.get("read-timeout").toString());
-            }
-            
-            if (download.containsKey("retry-count")) {
-                this.retryCount = Integer.parseInt(download.get("retry-count").toString());
-            }
-            
-            if (download.containsKey("retry-delay")) {
-                this.retryDelay = Integer.parseInt(download.get("retry-delay").toString());
-            }
+        Object value = map.get(key);
+        if (value instanceof Map) {
+            return (Map<String, Object>) value;
         }
         
-        // 加载缓存设置
-        if (map.containsKey("cache")) {
-            Map<String, Object> cache = (Map<String, Object>) map.get("cache");
-            
-            if (cache.containsKey("clean-unused")) {
-                this.cleanUnused = Boolean.parseBoolean(cache.get("clean-unused").toString());
-            }
-        }
-        
-        // 加载调试模式
-        if (map.containsKey("debug")) {
-            this.debug = Boolean.parseBoolean(map.get("debug").toString());
-        }
+        return null;
     }
 
-    // Getters
-    public boolean isProxyEnabled() {
-        return proxyEnabled;
-    }
-
-    public String getProxyType() {
-        return proxyType;
-    }
-
-    public String getProxyHost() {
-        return proxyHost;
-    }
-
-    public int getProxyPort() {
-        return proxyPort;
-    }
-
-    public String getProxyUsername() {
-        return proxyUsername;
-    }
-
-    public String getProxyPassword() {
-        return proxyPassword;
-    }
 
     public int getDownloadThreads() {
         return downloadThreads;
     }
 
+
     public int getConnectTimeout() {
         return connectTimeout;
     }
+
 
     public int getReadTimeout() {
         return readTimeout;
     }
 
-    public int getRetryCount() {
-        return retryCount;
+
+    public boolean isForceDownload() {
+        return forceDownload;
     }
 
-    public int getRetryDelay() {
-        return retryDelay;
-    }
-
+    /**
+     * 是否清理未使用的缓存
+     * @return 是否清理未使用的缓存
+     */
     public boolean isCleanUnused() {
         return cleanUnused;
     }
 
+    /**
+     * 是否启用代理
+     * @return 是否启用代理
+     */
+    public boolean isProxyEnabled() {
+        return proxyEnabled;
+    }
+
+    /**
+     * 获取代理类型
+     * @return 代理类型
+     */
+    public String getProxyType() {
+        return proxyType;
+    }
+
+    /**
+     * 获取代理主机
+     * @return 代理主机
+     */
+    public String getProxyHost() {
+        return proxyHost;
+    }
+
+    /**
+     * 获取代理端口
+     * @return 代理端口
+     */
+    public int getProxyPort() {
+        return proxyPort;
+    }
+
+    /**
+     * 是否启用调试模式
+     * @return 是否启用调试模式
+     */
     public boolean isDebug() {
         return debug;
+    }
+    
+    /**
+     * 获取语言设置
+     * @return 语言设置
+     */
+    public String getLanguage() {
+        return language;
     }
 } 

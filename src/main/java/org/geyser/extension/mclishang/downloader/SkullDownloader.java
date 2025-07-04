@@ -1,10 +1,13 @@
 package org.geyser.extension.mclishang.downloader;
 
 import org.geyser.extension.mclishang.config.GeyserHeadPackConfig;
+import org.geyser.extension.mclishang.util.I18n;
 import org.geysermc.geyser.api.extension.Extension;
 
+import javax.imageio.ImageIO;
+import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -12,13 +15,11 @@ import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.URL;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -26,60 +27,53 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * 头颅皮肤下载器
+ * 头颅皮肤下载器 - 与Geyser处理方式保持一致
  */
 public class SkullDownloader {
+
+    private static final String TEXTURE_URL_PREFIX = "https://textures.minecraft.net/texture/";
+    
     private final Extension extension;
     private final GeyserHeadPackConfig config;
     private final File cacheDir;
+    private final ExecutorService downloadExecutor;
     private final Set<String> currentHashes = new HashSet<>();
-    private final Map<String, Boolean> downloadResults = new ConcurrentHashMap<>();
-    
-    private static final String TEXTURE_URL_PREFIX = "http://textures.minecraft.net/texture/";
+    private final ConcurrentHashMap<String, Boolean> downloadResults = new ConcurrentHashMap<>();
+    private final I18n i18n;
 
-    /**
-     * 创建下载器
-     * @param extension 扩展实例
-     * @param config 配置
-     * @param geyserCacheDir Geyser缓存目录
-     */
-    public SkullDownloader(Extension extension, GeyserHeadPackConfig config, File geyserCacheDir) {
+    public SkullDownloader(Extension extension, GeyserHeadPackConfig config, File geyserCacheDir, I18n i18n) {
         this.extension = extension;
         this.config = config;
+        this.i18n = i18n;
         
-        // 确保Geyser的缓存目录存在
-        if (!geyserCacheDir.exists()) {
-            geyserCacheDir.mkdirs();
-        }
-        
-        // 创建player_skulls目录
+        // 使用正确的目录结构，与Geyser保持一致
         this.cacheDir = new File(geyserCacheDir, "player_skulls");
         if (!this.cacheDir.exists()) {
             this.cacheDir.mkdirs();
         }
+        
+        this.downloadExecutor = Executors.newFixedThreadPool(config.getDownloadThreads());
+        
+        if (config.isDebug()) {
+            extension.logger().info(i18n.get("debug.thread_pool_size", config.getDownloadThreads()));
+        }
     }
 
-    /**
-     * 下载多个头颅皮肤
-     * @param hashes 皮肤哈希列表
-     * @return 成功下载的数量
-     */
     public int downloadSkins(List<String> hashes) {
-        // 记录当前哈希以用于清理未使用的缓存
+        if (hashes == null || hashes.isEmpty()) {
+            return 0;
+        }
+        
         currentHashes.clear();
         currentHashes.addAll(hashes);
         
-        // 重置下载结果
         downloadResults.clear();
         
-        // 创建线程池
-        ExecutorService threadPool = Executors.newFixedThreadPool(config.getDownloadThreads());
         AtomicInteger successCount = new AtomicInteger(0);
-        AtomicInteger failCount = new AtomicInteger(0);
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
         
-        extension.logger().info("开始多线程下载 " + hashes.size() + " 个头颅皮肤文件...");
+        extension.logger().info(i18n.get("message.start_download", hashes.size()));
         
-        // 遍历所有哈希值，提交下载任务
         for (String hash : hashes) {
             if (hash == null || hash.trim().isEmpty()) {
                 continue;
@@ -87,200 +81,230 @@ public class SkullDownloader {
             
             final String cleanHash = hash.trim();
             
-            // 检查缓存
-            if (isCached(cleanHash)) {
-                if (config.isDebug()) {
-                    extension.logger().info("头颅皮肤缓存已存在: " + cleanHash);
-                }
-                downloadResults.put(cleanHash, true);
+            if (isCached(cleanHash) && !config.isForceDownload()) {
                 successCount.incrementAndGet();
                 continue;
             }
             
-            // 提交下载任务
-            threadPool.submit(() -> {
-                boolean success = downloadSkin(cleanHash);
-                downloadResults.put(cleanHash, success);
-                
-                if (success) {
-                    successCount.incrementAndGet();
-                } else {
-                    failCount.incrementAndGet();
+            CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                try {
+                    if (downloadSkin(cleanHash)) {
+                        successCount.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    if (config.isDebug()) {
+                        extension.logger().error(i18n.get("error.download_skin", cleanHash, e.getMessage()));
+                    }
                 }
-            });
+            }, downloadExecutor);
+            
+            futures.add(future);
         }
         
-        // 关闭线程池并等待所有任务完成
-        threadPool.shutdown();
-        try {
-            threadPool.awaitTermination(30, TimeUnit.MINUTES);
-        } catch (InterruptedException e) {
-            extension.logger().error("下载任务被中断", e);
-            Thread.currentThread().interrupt();
-        }
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
         
-        extension.logger().info("头颅皮肤下载完成 - 成功: " + successCount.get() + ", 失败: " + failCount.get());
+        shutdownExecutor();
         
-        // 清理未使用的缓存文件
         if (config.isCleanUnused()) {
             cleanUnusedCache();
         }
         
+        extension.logger().info(i18n.get("message.download_finished", successCount.get(), hashes.size()));
+        
         return successCount.get();
     }
-
-    /**
-     * 下载单个头颅皮肤
-     * @param hash 皮肤哈希
-     * @return 是否成功
-     */
+    
+    private void shutdownExecutor() {
+        downloadExecutor.shutdown();
+        try {
+            if (!downloadExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+                downloadExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            downloadExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+    
+    private boolean isCached(String hash) {
+        File file = new File(cacheDir, hash + ".png");
+        return file.exists() && file.length() > 0;
+    }
+    
     private boolean downloadSkin(String hash) {
-        String url = TEXTURE_URL_PREFIX + hash;
-        File outFile = new File(cacheDir, hash + ".png");
+        if (hash == null || hash.isEmpty()) {
+            return false;
+        }
         
-        // 重试逻辑
-        for (int attempt = 0; attempt <= config.getRetryCount(); attempt++) {
-            if (attempt > 0) {
-                if (config.isDebug()) {
-                    extension.logger().info("重试下载 (" + attempt + "/" + config.getRetryCount() + "): " + hash);
+        String cleanHash = hash.trim();
+        
+        File skinFile = new File(cacheDir, cleanHash + ".png");
+        if (skinFile.exists() && skinFile.length() > 0 && !config.isForceDownload()) {
+            return true;
+        }
+        
+        // 添加重试机制
+        int maxRetries = 3;
+        int retryDelay = 1000; // 毫秒
+        
+        for (int attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                String urlStr = TEXTURE_URL_PREFIX + cleanHash;
+                URL url = new URL(urlStr);
+                
+                HttpURLConnection connection = createConnection(url);
+                
+                int responseCode = connection.getResponseCode();
+                
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    try (InputStream inputStream = connection.getInputStream()) {
+                        BufferedImage originalImage = ImageIO.read(inputStream);
+                        
+                        if (originalImage != null) {
+                            // 使用与Geyser完全相同的处理方法
+                            BufferedImage processedImage = processSkullImage(originalImage);
+                            
+                            // 确保目录存在
+                            skinFile.getParentFile().mkdirs();
+                            
+                            ImageIO.write(processedImage, "PNG", skinFile);
+                            
+                            if (config.isDebug()) {
+                                extension.logger().info(i18n.get("debug.download_success", cleanHash, skinFile.getAbsolutePath()));
+                            }
+                            
+                            return true;
+                        } else {
+                            if (config.isDebug()) {
+                                extension.logger().error(i18n.get("error.image_read", cleanHash));
+                            }
+                        }
+                    }
+                } else {
+                    if (config.isDebug()) {
+                        extension.logger().error(i18n.get("error.download_failed", responseCode, cleanHash));
+                    }
+                    
+                    // 如果是服务器错误(5xx)或服务不可用，则重试
+                    if (responseCode >= 500 && responseCode < 600) {
+                        if (attempt < maxRetries - 1) {
+                            try {
+                                Thread.sleep(retryDelay * (attempt + 1));
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                break;
+                            }
+                            continue;
+                        }
+                    }
                 }
-                try {
-                    Thread.sleep(config.getRetryDelay());
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return false;
+            } catch (Exception e) {
+                if (config.isDebug()) {
+                    extension.logger().error(i18n.get("error.download_skin", cleanHash, e.getMessage()));
+                }
+                
+                // 对网络错误进行重试
+                if (attempt < maxRetries - 1) {
+                    try {
+                        Thread.sleep(retryDelay * (attempt + 1));
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                    continue;
                 }
             }
             
-            try {
-                if (downloadFile(url, outFile)) {
-                    if (config.isDebug()) {
-                        extension.logger().info("成功下载头颅皮肤: " + hash);
-                    }
-                    return true;
-                }
-            } catch (IOException e) {
-                if (config.isDebug()) {
-                    extension.logger().error("下载头颅皮肤失败: " + hash, e);
-                }
-            }
+            // 如果到达这里，说明这次尝试失败但不需要重试，直接退出循环
+            break;
         }
         
-        extension.logger().info("下载头颅皮肤失败（已尝试 " + (config.getRetryCount() + 1) + " 次）: " + hash);
         return false;
     }
-
-    /**
-     * 下载文件
-     * @param urlStr URL字符串
-     * @param outputFile 输出文件
-     * @return 是否成功
-     * @throws IOException 发生IO异常
-     */
-    private boolean downloadFile(String urlStr, File outputFile) throws IOException {
-        // 创建父目录
-        outputFile.getParentFile().mkdirs();
+    
+    private HttpURLConnection createConnection(URL url) throws IOException {
+        HttpURLConnection connection;
         
-        // 配置代理
-        Proxy proxy = Proxy.NO_PROXY;
         if (config.isProxyEnabled()) {
-            Proxy.Type proxyType = "SOCKS".equalsIgnoreCase(config.getProxyType()) 
-                ? Proxy.Type.SOCKS 
-                : Proxy.Type.HTTP;
-            proxy = new Proxy(proxyType, new InetSocketAddress(config.getProxyHost(), config.getProxyPort()));
+            Proxy proxy;
+            
+            if ("SOCKS".equalsIgnoreCase(config.getProxyType())) {
+                proxy = new Proxy(Proxy.Type.SOCKS, new InetSocketAddress(config.getProxyHost(), config.getProxyPort()));
+            } else {
+                proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(config.getProxyHost(), config.getProxyPort()));
+            }
+            
+            connection = (HttpURLConnection) url.openConnection(proxy);
+        } else {
+            connection = (HttpURLConnection) url.openConnection();
         }
         
-        // 创建连接
-        URL url = new URL(urlStr);
-        HttpURLConnection connection = (HttpURLConnection) url.openConnection(proxy);
+        connection.setRequestProperty("User-Agent", "GeyserHeadPack/1.0");
         connection.setConnectTimeout(config.getConnectTimeout());
         connection.setReadTimeout(config.getReadTimeout());
         
-        // 如果需要代理认证
-        if (config.isProxyEnabled() && 
-            !config.getProxyUsername().isEmpty() && 
-            !config.getProxyPassword().isEmpty()) {
-            
-            String auth = config.getProxyUsername() + ":" + config.getProxyPassword();
-            String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
-            connection.setRequestProperty("Proxy-Authorization", "Basic " + encodedAuth);
-        }
-        
-        // 进行连接
-        connection.connect();
-        
-        // 检查响应码
-        int responseCode = connection.getResponseCode();
-        if (responseCode != HttpURLConnection.HTTP_OK) {
-            throw new IOException("HTTP错误: " + responseCode + " " + connection.getResponseMessage());
-        }
-        
-        // 下载文件
-        try (InputStream in = connection.getInputStream();
-             FileOutputStream out = new FileOutputStream(outputFile)) {
-            
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = in.read(buffer)) != -1) {
-                out.write(buffer, 0, bytesRead);
-            }
-        }
-        
-        return true;
+        return connection;
     }
-
-    /**
-     * 检查头颅皮肤是否已缓存
-     * @param hash 皮肤哈希
-     * @return 是否已缓存
-     */
-    public boolean isCached(String hash) {
-        File cacheFile = new File(cacheDir, hash + ".png");
-        return cacheFile.exists() && cacheFile.length() > 0;
+    
+    private BufferedImage processSkullImage(BufferedImage originalImage) {
+        // 与Geyser完全相同的处理方法
+        // Resize skins to 48x16 to save on space and memory
+        BufferedImage skullTexture = new BufferedImage(48, 16, originalImage.getType());
+        // Reorder skin parts to fit into the space
+        // Right, Front, Left, Back, Top, Bottom - head
+        // Right, Front, Left, Back, Top, Bottom - hat
+        Graphics g = skullTexture.createGraphics();
+        try {
+            // Right, Front, Left, Back of the head
+            g.drawImage(originalImage, 0, 0, 32, 8, 0, 8, 32, 16, null);
+            // Right, Front, Left, Back of the hat
+            g.drawImage(originalImage, 0, 8, 32, 16, 32, 8, 64, 16, null);
+            // Top and bottom of the head
+            g.drawImage(originalImage, 32, 0, 48, 8, 8, 0, 24, 8, null);
+            // Top and bottom of the hat
+            g.drawImage(originalImage, 32, 8, 48, 16, 40, 0, 56, 8, null);
+        } finally {
+            g.dispose();
+        }
+        originalImage.flush();
+        
+        return skullTexture;
     }
-
-    /**
-     * 清理未使用的缓存文件
-     */
+    
     private void cleanUnusedCache() {
+        if (cacheDir == null || !cacheDir.exists() || !cacheDir.isDirectory()) {
+            return;
+        }
+        
         File[] files = cacheDir.listFiles((dir, name) -> name.endsWith(".png"));
         if (files == null) {
             return;
         }
         
-        int removedCount = 0;
+        int cleanedCount = 0;
+        
         for (File file : files) {
             String fileName = file.getName();
             String hash = fileName.substring(0, fileName.lastIndexOf('.'));
             
             if (!currentHashes.contains(hash)) {
-                if (file.delete()) {
-                    removedCount++;
+                try {
+                    Files.delete(file.toPath());
+                    cleanedCount++;
+                    
                     if (config.isDebug()) {
-                        extension.logger().info("已删除未使用的缓存文件: " + fileName);
+                        extension.logger().info(i18n.get("debug.cache_deleted", fileName));
+                    }
+                } catch (IOException e) {
+                    if (config.isDebug()) {
+                        extension.logger().error("Failed to delete cache file: " + fileName);
                     }
                 }
             }
         }
         
-        if (removedCount > 0) {
-            extension.logger().info("已清理 " + removedCount + " 个未使用的缓存文件");
+        if (cleanedCount > 0) {
+            extension.logger().info(i18n.get("message.cleaned_cache", cleanedCount));
         }
     }
-
-    /**
-     * 获取下载结果
-     * @return 下载结果映射
-     */
-    public Map<String, Boolean> getDownloadResults() {
-        return new ConcurrentHashMap<>(downloadResults);
-    }
-
-    /**
-     * 获取缓存目录
-     * @return 缓存目录
-     */
-    public File getCacheDir() {
-        return cacheDir;
-    }
-} 
+}

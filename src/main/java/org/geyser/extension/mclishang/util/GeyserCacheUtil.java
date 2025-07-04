@@ -3,133 +3,217 @@ package org.geyser.extension.mclishang.util;
 import org.geysermc.geyser.api.extension.Extension;
 
 import java.io.File;
-import java.io.IOException;
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.nio.file.Path;
+import java.util.Arrays;
 
 /**
  * Geyser缓存工具类
  */
 public class GeyserCacheUtil {
-    
-    /**
-     * 获取Geyser的缓存目录
-     * @param extension 扩展实例
-     * @return 缓存目录，如果无法获取则返回扩展的数据目录
-     */
-    public static File getGeyserCacheDir(Extension extension) {
-        try {
-            // 尝试通过反射获取GeyserImpl实例
-            Object geyserImpl = getGeyserImpl();
-            
-            if (geyserImpl != null) {
-                // 尝试获取bootstrap对象
-                Object bootstrap = invokeGeyserMethod(geyserImpl, "getBootstrap");
-                
-                if (bootstrap != null) {
-                    // 尝试不同的方法名称来获取缓存目录
-                    String[] possibleMethodNames = {
-                        "getCacheDir", 
-                        "getDataFolder", 
-                        "getConfigFolder", 
-                        "getDataPath",
-                        "getCachePath"
-                    };
-                    
-                    for (String methodName : possibleMethodNames) {
-                        try {
-                            Object result = invokeBootstrapMethod(bootstrap, methodName);
-                            if (result != null) {
-                                File cacheDir = null;
-                                
-                                if (result instanceof Path) {
-                                    cacheDir = ((Path) result).toFile();
-                                } else if (result instanceof File) {
-                                    cacheDir = (File) result;
-                                } else if (result instanceof String) {
-                                    cacheDir = new File((String) result);
-                                }
-                                
-                                if (cacheDir != null) {
-                                    // 尝试在不同位置查找player_skulls目录
-                                    File playerSkullsDir = new File(cacheDir, "player_skulls");
-                                    if (playerSkullsDir.exists() || cacheDir.getName().equals("cache")) {
-                                        extension.logger().info("已找到Geyser缓存目录: " + cacheDir.getAbsolutePath());
-                                        return cacheDir;
-                                    }
-                                    
-                                    File cacheDirInParent = new File(cacheDir, "cache");
-                                    if (cacheDirInParent.exists()) {
-                                        extension.logger().info("已找到Geyser缓存目录: " + cacheDirInParent.getAbsolutePath());
-                                        return cacheDirInParent;
-                                    }
-                                }
-                            }
-                        } catch (Exception e) {
-                            // 忽略单个方法的异常，尝试下一个方法
-                            extension.logger().info("尝试方法 " + methodName + " 失败: " + e.getMessage());
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            extension.logger().error("无法获取Geyser缓存目录", e);
+
+
+    public static File getGeyserCacheDir(Extension extension) throws RuntimeException {
+        I18n i18n = null;
+        
+        if (extension instanceof org.geyser.extension.mclishang.GeyserHeadPack) {
+            i18n = ((org.geyser.extension.mclishang.GeyserHeadPack) extension).getI18n();
         }
         
-        // 如果无法获取缓存目录，则使用扩展的数据目录作为备选
-        File fallbackDir = new File(extension.dataFolder().toFile(), "cache");
-        if (!fallbackDir.exists()) {
-            fallbackDir.mkdirs();
+        try {
+            Object bootstrap = getGeyserBootstrap(extension);
+            if (bootstrap == null) {
+                logMessage(extension, i18n, "error.bootstrap_not_found");
+                
+                return findCacheDirManually(extension, i18n);
+            }
+            
+            logMessage(extension, i18n, "debug.bootstrap_found", bootstrap.getClass().getName());
+            
+            File cacheDir = tryGetCacheDir(bootstrap, "getCacheDir");
+            if (cacheDir != null) {
+                logMessage(extension, i18n, "debug.cache_dir_found", cacheDir.getAbsolutePath());
+                
+                if (!cacheDir.exists()) {
+                    logMessage(extension, i18n, "error.cache_dir_not_exist", cacheDir.getAbsolutePath());
+                    
+                    return findCacheDirManually(extension, i18n);
+                }
+                
+                File playerSkullsDir = new File(cacheDir, "player_skulls");
+                if (!playerSkullsDir.exists()) {
+                    if (playerSkullsDir.mkdirs()) {
+                        logMessage(extension, i18n, "debug.player_skulls_created");
+                    } else {
+                        throw new RuntimeException(getMessage(i18n, "error.create_player_skulls_dir", playerSkullsDir.getAbsolutePath()));
+                    }
+                }
+                
+                return cacheDir;
+            } else {
+                logMessage(extension, i18n, "debug.get_cache_dir_null");
+            }
+            
+            File dataFolder = tryGetCacheDir(bootstrap, "getDataFolder");
+            if (dataFolder != null) {
+                logMessage(extension, i18n, "debug.data_folder_found", dataFolder.getAbsolutePath());
+                
+                File cacheDir2 = new File(dataFolder, "cache");
+                
+                if (!cacheDir2.exists()) {
+                    logMessage(extension, i18n, "error.cache_subdir_not_exist", cacheDir2.getAbsolutePath());
+                    
+                    return findCacheDirManually(extension, i18n);
+                }
+                
+                logMessage(extension, i18n, "debug.cache_dir_found", cacheDir2.getAbsolutePath());
+                
+                File playerSkullsDir = new File(cacheDir2, "player_skulls");
+                if (!playerSkullsDir.exists()) {
+                    if (playerSkullsDir.mkdirs()) {
+                        logMessage(extension, i18n, "debug.player_skulls_created");
+                    } else {
+                        throw new RuntimeException(getMessage(i18n, "error.create_player_skulls_dir", playerSkullsDir.getAbsolutePath()));
+                    }
+                }
+                
+                return cacheDir2;
+            } else {
+                logMessage(extension, i18n, "debug.get_data_folder_null");
+            }
+            
+            return findCacheDirManually(extension, i18n);
+            
+        } catch (Exception e) {
+            logError(extension, i18n, "error.get_cache_dir", e.getMessage());
+            
+            return findCacheDirManually(extension, i18n);
         }
-        extension.logger().info("使用备用缓存目录: " + fallbackDir.getAbsolutePath());
-        return fallbackDir;
     }
     
-    /**
-     * 获取GeyserImpl实例
-     * @return GeyserImpl对象
-     * @throws ClassNotFoundException 类未找到异常
-     * @throws NoSuchFieldException 字段未找到异常
-     * @throws IllegalAccessException 非法访问异常
-     */
-    private static Object getGeyserImpl() throws ClassNotFoundException, NoSuchFieldException, IllegalAccessException {
-        Class<?> geyserClass = Class.forName("org.geysermc.geyser.GeyserImpl");
-        Field instanceField = geyserClass.getDeclaredField("instance");
-        instanceField.setAccessible(true);
-        return instanceField.get(null);
+
+    private static File findCacheDirManually(Extension extension, I18n i18n) throws RuntimeException {
+
+        File currentDir = new File(".");
+        logMessage(extension, i18n, "debug.current_dir", currentDir.getAbsolutePath());
+        
+
+        File cacheDir = new File(currentDir, "cache");
+        if (cacheDir.exists() && cacheDir.isDirectory()) {
+            logMessage(extension, i18n, "debug.cache_dir_found_current", cacheDir.getAbsolutePath());
+            
+            File playerSkullsDir = new File(cacheDir, "player_skulls");
+            if (!playerSkullsDir.exists()) {
+                if (playerSkullsDir.mkdirs()) {
+                    logMessage(extension, i18n, "debug.player_skulls_created");
+                } else {
+                    throw new RuntimeException(getMessage(i18n, "error.create_player_skulls_dir", playerSkullsDir.getAbsolutePath()));
+                }
+            }
+            
+            return cacheDir;
+        }
+        
+        File parentDir = currentDir.getAbsoluteFile().getParentFile();
+        if (parentDir != null) {
+            File parentCacheDir = new File(parentDir, "cache");
+            if (parentCacheDir.exists() && parentCacheDir.isDirectory()) {
+                logMessage(extension, i18n, "debug.cache_dir_found_parent", parentCacheDir.getAbsolutePath());
+                
+                File playerSkullsDir = new File(parentCacheDir, "player_skulls");
+                if (!playerSkullsDir.exists()) {
+                    if (playerSkullsDir.mkdirs()) {
+                        logMessage(extension, i18n, "debug.player_skulls_created");
+                    } else {
+                        throw new RuntimeException(getMessage(i18n, "error.create_player_skulls_dir", playerSkullsDir.getAbsolutePath()));
+                    }
+                }
+                
+                return parentCacheDir;
+            }
+        }
+        
+        throw new RuntimeException(getMessage(i18n, "error.cache_dir_not_found"));
     }
     
-    /**
-     * 调用Geyser方法
-     * @param geyserImpl GeyserImpl实例
-     * @param methodName 方法名称
-     * @return 方法返回值
-     * @throws NoSuchMethodException 方法未找到异常
-     * @throws InvocationTargetException 调用目标异常
-     * @throws IllegalAccessException 非法访问异常
-     */
-    private static Object invokeGeyserMethod(Object geyserImpl, String methodName) 
-            throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        Method method = geyserImpl.getClass().getMethod(methodName);
-        method.setAccessible(true);
-        return method.invoke(geyserImpl);
+
+    private static Object getGeyserBootstrap(Extension extension) {
+        try {
+            Class<?> geyserClass = Class.forName("org.geysermc.geyser.GeyserImpl");
+            Field instanceField = geyserClass.getDeclaredField("instance");
+            instanceField.setAccessible(true);
+            Object geyserImpl = instanceField.get(null);
+            
+            if (geyserImpl != null) {
+                Method getBootstrapMethod = geyserClass.getMethod("getBootstrap");
+                return getBootstrapMethod.invoke(geyserImpl);
+            }
+        } catch (Exception e) {
+            extension.logger().error("Error getting GeyserBootstrap instance: " + e.getMessage());
+        }
+        return null;
     }
     
-    /**
-     * 调用Bootstrap方法
-     * @param bootstrap Bootstrap实例
-     * @param methodName 方法名称
-     * @return 方法返回值
-     * @throws NoSuchMethodException 方法未找到异常
-     * @throws InvocationTargetException 调用目标异常
-     * @throws IllegalAccessException 非法访问异常
-     */
-    private static Object invokeBootstrapMethod(Object bootstrap, String methodName) 
-            throws NoSuchMethodException, InvocationTargetException, IllegalAccessException {
-        Method method = bootstrap.getClass().getMethod(methodName);
-        method.setAccessible(true);
-        return method.invoke(bootstrap);
+
+    private static File tryGetCacheDir(Object bootstrap, String methodName) {
+        try {
+            Method method = bootstrap.getClass().getMethod(methodName);
+            Object result = method.invoke(bootstrap);
+            if (result instanceof File) {
+                return (File) result;
+            }
+        } catch (Exception e) {
+        }
+        return null;
+    }
+    
+
+    private static void logMessage(Extension extension, I18n i18n, String key) {
+        if (i18n != null) {
+            extension.logger().info(i18n.get(key));
+        } else {
+            extension.logger().info(key);
+        }
+    }
+    
+
+    private static void logMessage(Extension extension, I18n i18n, String key, Object... args) {
+        if (i18n != null) {
+            extension.logger().info(i18n.get(key, args));
+        } else {
+            extension.logger().info(key + ": " + formatArgs(args));
+        }
+    }
+    
+
+    private static void logError(Extension extension, I18n i18n, String key, Object... args) {
+        if (i18n != null) {
+            extension.logger().error(i18n.get(key, args));
+        } else {
+            extension.logger().error(key + ": " + formatArgs(args));
+        }
+    }
+    
+    private static String getMessage(I18n i18n, String key, Object... args) {
+        if (i18n != null) {
+            return i18n.get(key, args);
+        } else {
+            return key + ": " + formatArgs(args);
+        }
+    }
+    
+    private static String formatArgs(Object[] args) {
+        if (args == null || args.length == 0) {
+            return "";
+        }
+        
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < args.length; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(args[i] == null ? "null" : args[i].toString());
+        }
+        return sb.toString();
     }
 } 

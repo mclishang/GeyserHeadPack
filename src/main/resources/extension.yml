@@ -1,17 +1,6 @@
-# The id of the extension
 id: geyserheadpack
-
-# The name of the extension
 name: GeyserHeadPack
-
-# The version of the extension
-version: 1.0.0
-
-# The API version
-api: 2.0.0
-
-# The main class of the extension
+version: 1.1.0
+api: 2.8.0
 main: org.geyser.extension.mclishang.GeyserHeadPack
-
-# Authors of the extension
 authors: [mclishang]
