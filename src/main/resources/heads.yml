@@ -1,0 +1,10 @@
+# GeyserHeadPack 头颅配置文件 / GeyserHeadPack Skulls Configuration File
+# 在此文件中添加您想要加载的头颅皮肤哈希值 / Add the skin hash values of the skulls you want to load in this file
+# 每行一个哈希值，以 - 开头 / One hash per line, starting with -
+
+# 皮肤哈希列表 / Skin hash list
+skin-hashes:
+  # 示例哈希值 / Example hash values
+  - 2c4a72af11a0a81e5c3f5168f6cebc7a1c8a5f0e9c9c6d5a4b3c2d1e0f9a8b7c
+  - 3b5a72af11a0a81e5c3f5168f6cebc7a1c8a5f0e9c9c6d5a4b3c2d1e0f9a8b7c
+  # 添加更多哈希值... / Add more hashes...

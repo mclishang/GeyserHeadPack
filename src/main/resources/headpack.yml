@@ -1,0 +1,42 @@
+# GeyserHeadPack 配置文件 / GeyserHeadPack Configuration File
+
+# 语言设置 / Language settings
+# 可选值 / Available options: zh_CN, en_US
+# zh_CN - 中文(简体) / Chinese (Simplified)
+# en_US - 英文 / English
+language: zh_CN
+
+# 下载设置 / Download settings
+download:
+  # 下载线程数 / Number of download threads
+  threads: 16
+  # 连接超时时间(毫秒) / Connection timeout (milliseconds)
+  connect-timeout: 5000
+  # 读取超时时间(毫秒) / Read timeout (milliseconds)
+  read-timeout: 5000
+  # 重试次数
+  retry-count: 3
+  # 重试延迟(毫秒)
+  retry-delay: 1000
+  # 是否强制重新下载已存在的皮肤 / Whether to force redownload existing skins
+  force-download: false
+  # 是否清理未使用的缓存文件 / Whether to clean unused cache files
+  clean-unused: true
+
+# 代理设置 / Proxy settings
+proxy:
+  # 是否启用代理 / Whether to enable proxy
+  enabled: false
+  # 代理类型 (HTTP 或 SOCKS) / Proxy type (HTTP or SOCKS)
+  type: HTTP
+  # 代理主机 / Proxy host
+  host: 127.0.0.1
+  # 代理端口 / Proxy port
+  port: 7897
+  # 代理用户名 (如果需要认证)
+  username: ""
+  # 代理密码 (如果需要认证)
+  password: ""
+
+# 调试模式 / Debug mode
+debug: false 

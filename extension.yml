@@ -1,0 +1,6 @@
+id: geyserheadpack
+name: GeyserHeadPack
+version: 1.0.0
+api: 2.0.0
+main: org.geyser.extension.mclishang.GeyserHeadPack
+authors: [mclishang]
